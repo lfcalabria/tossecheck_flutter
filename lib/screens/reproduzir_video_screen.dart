@@ -8,33 +8,77 @@ class ReproduzirVideoScreen extends StatefulWidget {
   const ReproduzirVideoScreen({super.key, required this.video});
 
   @override
-  _ReproduzirVideoScreenState createState() => _ReproduzirVideoScreenState();
+  State<ReproduzirVideoScreen> createState() => _ReproduzirVideoScreenState();
 }
 
 class _ReproduzirVideoScreenState extends State<ReproduzirVideoScreen> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   bool _inicializado = false;
+  String? _erro;
 
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.video.caminhoLocal))
-      ..initialize().then((_) {
-        if (mounted) {
-          setState(() { _inicializado = true; });
-          _controller.play();
-        }
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    final file = File(widget.video.caminhoLocal);
+
+    if (!await file.exists()) {
+      setState(() {
+        _erro = 'Arquivo de vídeo não encontrado no dispositivo.';
+        _inicializado = false;
       });
+      return;
+    }
+
+    try {
+      final c = VideoPlayerController.file(file);
+      _controller = c;
+
+      await c.initialize();
+      await c.setLooping(true);
+
+      if (!mounted) return;
+      setState(() {
+        _inicializado = true;
+        _erro = null;
+      });
+
+      await c.play();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _erro = 'Falha ao carregar o vídeo: $e';
+        _inicializado = false;
+      });
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
+  }
+
+  void _togglePlayPause() {
+    final c = _controller;
+    if (c == null) return;
+
+    if (c.value.isPlaying) {
+      c.pause();
+    } else {
+      c.play();
+    }
+    // não precisa setState — o VideoPlayer já atualiza via controller
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = _controller;
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -42,22 +86,52 @@ class _ReproduzirVideoScreenState extends State<ReproduzirVideoScreen> {
         backgroundColor: Colors.black,
       ),
       body: Center(
-        child: _inicializado
-            ? AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: VideoPlayer(_controller),
+        child: _erro != null
+            ? Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  _erro!,
+                  style: const TextStyle(color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
               )
-            : const CircularProgressIndicator(color: Colors.teal),
+            : (_inicializado && c != null)
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      AspectRatio(
+                        aspectRatio: c.value.aspectRatio,
+                        child: VideoPlayer(c),
+                      ),
+                      const SizedBox(height: 12),
+                      VideoProgressIndicator(
+                        c,
+                        allowScrubbing: true,
+                        colors: const VideoProgressColors(
+                          playedColor: Colors.teal,
+                          bufferedColor: Colors.white24,
+                          backgroundColor: Colors.white12,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        c.value.isPlaying ? 'Reproduzindo…' : 'Pausado',
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  )
+                : const CircularProgressIndicator(color: Colors.teal),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.teal,
-        onPressed: () {
-          setState(() {
-            _controller.value.isPlaying ? _controller.pause() : _controller.play();
-          });
-        },
-        child: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
-      ),
+      floatingActionButton: (c == null || !_inicializado)
+          ? null
+          : FloatingActionButton(
+              backgroundColor: Colors.teal,
+              onPressed: _togglePlayPause,
+              child: Icon(
+                c.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+              ),
+            ),
     );
   }
 }

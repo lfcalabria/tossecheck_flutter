@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+
 import '../database/database_helper.dart';
 import '../models/pet.dart';
 import '../services/api_service.dart';
@@ -11,7 +12,7 @@ class CadastroPetScreen extends StatefulWidget {
   const CadastroPetScreen({super.key});
 
   @override
-  _CadastroPetScreenState createState() => _CadastroPetScreenState();
+  State<CadastroPetScreen> createState() => _CadastroPetScreenState();
 }
 
 class _CadastroPetScreenState extends State<CadastroPetScreen> {
@@ -21,9 +22,9 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
   final _idadeController = TextEditingController();
   final _pesoController = TextEditingController();
   final _alturaController = TextEditingController();
-  
-  String? _tipoSelecionado;
-  String? _sexoSelecionado;
+
+  String? _tipoSelecionado; // "Cachorro" | "Gato"
+  String? _sexoSelecionado; // "Macho" | "Fêmea"
   String? _fotoPath;
   bool _salvando = false;
   final ImagePicker _picker = ImagePicker();
@@ -47,12 +48,20 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt), title: const Text('Câmera'),
-              onTap: () { Navigator.pop(context); _capturarFoto(ImageSource.camera); },
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Câmera'),
+              onTap: () {
+                Navigator.pop(context);
+                _capturarFoto(ImageSource.camera);
+              },
             ),
             ListTile(
-              leading: const Icon(Icons.photo), title: const Text('Galeria'),
-              onTap: () { Navigator.pop(context); _capturarFoto(ImageSource.gallery); },
+              leading: const Icon(Icons.photo),
+              title: const Text('Galeria'),
+              onTap: () {
+                Navigator.pop(context);
+                _capturarFoto(ImageSource.gallery);
+              },
             ),
           ],
         ),
@@ -62,34 +71,60 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
 
   Future<void> _salvar() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_tipoSelecionado == null || _sexoSelecionado == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione Tipo e Sexo.')));
-      return;
-    }
 
     setState(() => _salvando = true);
-    final usuario = await DatabaseHelper.instance.getUsuario();
 
-    final pet = Pet(
-      usuarioUuid: usuario?.uuid,
-      nome: _nomeController.text.trim(),
-      tipo: _tipoSelecionado!,
-      sexo: _sexoSelecionado!,
-      raca: _racaController.text.trim(),
-      idade: int.parse(_idadeController.text),
-      peso: double.parse(_pesoController.text.replaceAll(',', '.')),
-      altura: double.parse(_alturaController.text.replaceAll(',', '.')),
-      fotoPath: _fotoPath,
-      dataCadastro: DateTime.now(),
-      dataUltimaAtualizacao: DateTime.now(),
-      sincronizado: false,
-    );
+    try {
+      final db = DatabaseHelper.instance;
+      final usuario = await db.getUsuario();
 
-    await DatabaseHelper.instance.insertPet(pet);
-    await ApiService().sincronizarGeral();
+      if (usuario == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cadastre o responsável antes de cadastrar o pet.')),
+        );
+        setState(() => _salvando = false);
+        return;
+      }
 
-    setState(() => _salvando = false);
-    if (mounted) Navigator.pop(context);
+      // Parse seguro (mesmo com validator, evita crash)
+      final idade = int.tryParse(_idadeController.text.trim());
+      final peso = double.tryParse(_pesoController.text.trim().replaceAll(',', '.'));
+      final altura = double.tryParse(_alturaController.text.trim().replaceAll(',', '.'));
+
+      final pet = Pet(
+        usuarioUuid: usuario.uuid, // pode ser null antes do sync (ok no SQLite)
+        nome: _nomeController.text.trim(),
+        tipo: _tipoSelecionado!,     // ✅ "Cachorro" | "Gato"
+        sexo: _sexoSelecionado,      // ✅ "Macho" | "Fêmea"
+        raca: _racaController.text.trim().isEmpty ? null : _racaController.text.trim(),
+        idade: idade,
+        peso: peso,
+        altura: altura,
+        fotoPath: _fotoPath,
+        dataCadastro: DateTime.now(),
+        dataUltimaAtualizacao: DateTime.now(),
+        sincronizado: false,
+      );
+
+      await db.insertPet(pet);
+
+      // tenta sincronizar (se tiver internet)
+      await ApiService().sincronizarGeral();
+
+      if (mounted) Navigator.pop(context);
+    } finally {
+      if (mounted) setState(() => _salvando = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _nomeController.dispose();
+    _racaController.dispose();
+    _idadeController.dispose();
+    _pesoController.dispose();
+    _alturaController.dispose();
+    super.dispose();
   }
 
   @override
@@ -108,77 +143,122 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
                   radius: 60,
                   backgroundColor: Colors.grey.shade300,
                   backgroundImage: _fotoPath != null ? FileImage(File(_fotoPath!)) : null,
-                  child: _fotoPath == null ? const Icon(Icons.add_a_photo, size: 40, color: Colors.grey) : null,
+                  child: _fotoPath == null
+                      ? const Icon(Icons.add_a_photo, size: 40, color: Colors.grey)
+                      : null,
                 ),
               ),
               const SizedBox(height: 24),
+
               TextFormField(
                 controller: _nomeController,
-                decoration: const InputDecoration(labelText: 'Nome do Pet', border: OutlineInputBorder()),
-                validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                decoration: const InputDecoration(
+                  labelText: 'Nome do Pet',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
               ),
               const SizedBox(height: 16),
+
               DropdownButtonFormField<String>(
-                decoration: const InputDecoration(labelText: 'Tipo', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Tipo',
+                  border: OutlineInputBorder(),
+                ),
                 initialValue: _tipoSelecionado,
                 items: const [
-                  DropdownMenuItem(value: 'cachorro', child: Text('Cachorro')),
-                  DropdownMenuItem(value: 'gato', child: Text('Gato')),
+                  DropdownMenuItem(value: 'Cachorro', child: Text('Cachorro')),
+                  DropdownMenuItem(value: 'Gato', child: Text('Gato')),
                 ],
                 onChanged: (v) => setState(() => _tipoSelecionado = v),
+                validator: (v) => (v == null || v.isEmpty) ? 'Obrigatório' : null,
               ),
               const SizedBox(height: 16),
+
               DropdownButtonFormField<String>(
-                decoration: const InputDecoration(labelText: 'Sexo', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Sexo',
+                  border: OutlineInputBorder(),
+                ),
                 initialValue: _sexoSelecionado,
                 items: const [
-                  DropdownMenuItem(value: 'masculino', child: Text('Masculino')),
-                  DropdownMenuItem(value: 'feminino', child: Text('Feminino')),
+                  DropdownMenuItem(value: 'Macho', child: Text('Macho')),
+                  DropdownMenuItem(value: 'Fêmea', child: Text('Fêmea')),
                 ],
                 onChanged: (v) => setState(() => _sexoSelecionado = v),
+                validator: (v) => (v == null || v.isEmpty) ? 'Obrigatório' : null,
               ),
               const SizedBox(height: 16),
+
               TextFormField(
                 controller: _racaController,
-                decoration: const InputDecoration(labelText: 'Raça', border: OutlineInputBorder()),
-                validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                decoration: const InputDecoration(
+                  labelText: 'Raça',
+                  border: OutlineInputBorder(),
+                ),
+                // se quiser manter obrigatório, deixe como está:
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
               ),
               const SizedBox(height: 16),
+
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: _idadeController,
-                      decoration: const InputDecoration(labelText: 'Idade (anos)', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Idade (anos)',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: TextInputType.number,
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: TextFormField(
                       controller: _pesoController,
-                      decoration: const InputDecoration(labelText: 'Peso (kg)', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Peso (kg)',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: TextFormField(
                       controller: _alturaController,
-                      decoration: const InputDecoration(labelText: 'Altura (cm)', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Altura (cm)',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
                     ),
                   ),
                 ],
               ),
+
               const SizedBox(height: 32),
+
               ElevatedButton(
                 onPressed: _salvando ? null : _salvar,
-                style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), backgroundColor: Colors.teal),
-                child: _salvando ? const CircularProgressIndicator(color: Colors.white) : const Text('Salvar Pet', style: TextStyle(color: Colors.white, fontSize: 18)),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                  backgroundColor: Colors.teal,
+                ),
+                child: _salvando
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Text(
+                        'Salvar Pet',
+                        style: TextStyle(color: Colors.white, fontSize: 18),
+                      ),
               )
             ],
           ),

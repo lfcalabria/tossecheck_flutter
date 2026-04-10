@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../database/database_helper.dart';
 import '../models/usuario.dart';
 import '../services/api_service.dart';
+import '../utils/cpf_validator.dart';
 import 'lista_pets_screen.dart';
- 
+
 class CadastroUsuarioScreen extends StatefulWidget {
   const CadastroUsuarioScreen({super.key});
 
   @override
-  _CadastroUsuarioScreenState createState() => _CadastroUsuarioScreenState();
+  State<CadastroUsuarioScreen> createState() => _CadastroUsuarioScreenState();
 }
 
 class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
@@ -17,55 +19,136 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
   final _nomeController = TextEditingController();
   final _cpfController = TextEditingController();
   final _telefoneController = TextEditingController();
+
   bool _salvando = false;
 
-  // 👉 FUNÇÃO INTELIGENTE: Formatação perfeita para nomes brasileiros
+  @override
+  void dispose() {
+    _nomeController.dispose();
+    _cpfController.dispose();
+    _telefoneController.dispose();
+    super.dispose();
+  }
+
+  // Formata nomes brasileiros de forma inteligente
   String _formatarNome(String nome) {
     if (nome.trim().isEmpty) return '';
-    
-    // O RegExp(r'\s+') garante que se o usuário der dois espaços sem querer, o código não quebra
-    return nome.trim().split(RegExp(r'\s+')).map((palavra) {
-      if (palavra.isEmpty) return '';
-      
-      // Lista exata de conectivos que devem ficar sempre minúsculos
-      if (['de', 'da', 'das', 'do', 'dos', 'e'].contains(palavra.toLowerCase())) {
-        return palavra.toLowerCase();
-      }
-      
-      // As demais palavras ganham a primeira letra maiúscula
-      return palavra[0].toUpperCase() + palavra.substring(1).toLowerCase();
-    }).join(' ');
+
+    return nome
+        .trim()
+        .split(RegExp(r'\s+'))
+        .map((palavra) {
+          if (palavra.isEmpty) return '';
+
+          if (['de', 'da', 'das', 'do', 'dos', 'e']
+              .contains(palavra.toLowerCase())) {
+            return palavra.toLowerCase();
+          }
+
+          return palavra[0].toUpperCase() + palavra.substring(1).toLowerCase();
+        })
+        .join(' ');
   }
 
   Future<void> _salvar() async {
     if (!_formKey.currentState!.validate()) return;
+
     setState(() => _salvando = true);
 
-    // Aplica a formatação no nome antes de criar o objeto
-    String nomeFormatado = _formatarNome(_nomeController.text);
+    try {
+      final db = DatabaseHelper.instance;
 
-    final usuario = Usuario(
-      nome: nomeFormatado,
-      cpf: _cpfController.text.replaceAll(RegExp(r'[^\d]'), ''),
-      telefone: _telefoneController.text.replaceAll(RegExp(r'[^\d]'), ''),
-      dataCadastro: DateTime.now(),
-      dataUltimaAtualizacao: DateTime.now(),
-      sincronizado: false,
-    );
+      final nomeFormatado = _formatarNome(_nomeController.text);
+      final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'[^\d]'), '');
+      final telefoneLimpo =
+          _telefoneController.text.replaceAll(RegExp(r'[^\d]'), '');
 
-    // Salva localmente
-    await DatabaseHelper.instance.insertUsuario(usuario);
+      // ✅ evita duplicar: se já existir usuário com esse CPF, atualiza
+      final usuarioExistente = await db.getUsuarioPorCpf(cpfLimpo);
 
-    // Tenta sincronizar imediatamente se houver internet
-    await ApiService().sincronizarGeral();
+      Usuario usuario;
 
-    setState(() => _salvando = false);
+      if (usuarioExistente != null) {
+        usuario = Usuario(
+          id: usuarioExistente.id,
+          uuid: usuarioExistente.uuid,
+          nome: nomeFormatado,
+          cpf: cpfLimpo,
+          telefone: telefoneLimpo,
+          dataCadastro: usuarioExistente.dataCadastro,
+          dataUltimaAtualizacao: DateTime.now(),
+          sincronizado: usuarioExistente.sincronizado,
+          bloqueado: usuarioExistente.bloqueado,
+          liberado: usuarioExistente.liberado,
+        );
 
-    if (mounted) {
+        await db.updateUsuario(usuario);
+      } else {
+        usuario = Usuario(
+          nome: nomeFormatado,
+          cpf: cpfLimpo,
+          telefone: telefoneLimpo,
+          dataCadastro: DateTime.now(),
+          dataUltimaAtualizacao: DateTime.now(),
+          sincronizado: false,
+          bloqueado: false,
+          liberado: true,
+        );
+
+        // ✅ pega o id gerado no SQLite e grava no objeto
+        final idInserido = await db.insertUsuario(usuario);
+        usuario.id = idInserido;
+      }
+
+      // tenta sincronizar se houver internet
+      final apiService = ApiService();
+      final hasInternet = await apiService.hasInternet();
+
+      if (hasInternet) {
+        final resultado = await apiService.sincronizarUsuarioLocal(usuario);
+
+        if (resultado.conflito) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  resultado.mensagem ??
+                      'Conflito de CPF. O usuário foi bloqueado.',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
+        if (resultado.sucesso) {
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const ListaPetsScreen()),
+          );
+          return;
+        }
+      }
+
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const ListaPetsScreen()),
       );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao salvar cadastro: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _salvando = false);
+      }
     }
   }
 
@@ -93,8 +176,7 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
                   style: TextStyle(fontSize: 16),
                 ),
                 const SizedBox(height: 32),
-                
-                // CAMPO NOME (Com TextCapitalization.words)
+
                 TextFormField(
                   controller: _nomeController,
                   decoration: const InputDecoration(
@@ -103,50 +185,57 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
                     prefixIcon: Icon(Icons.person),
                   ),
                   textCapitalization: TextCapitalization.words,
-                  validator: (v) => v!.trim().isEmpty ? 'Informe seu nome' : null,
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Informe seu nome' : null,
                 ),
                 const SizedBox(height: 16),
 
-                // CAMPO CPF (Max 11 e apenas números)
                 TextFormField(
                   controller: _cpfController,
                   decoration: const InputDecoration(
                     labelText: 'CPF',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.badge),
-                    counterText: '', // Remove o contador visual (0/11)
+                    counterText: '',
                   ),
                   keyboardType: TextInputType.number,
-                  maxLength: 11, // Trava a digitação em 11 caracteres
+                  maxLength: 11,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   validator: (v) {
-                    if (v == null || v.isEmpty) return 'Informe seu CPF';
-                    if (v.length != 11) return 'O CPF deve ter exatamente 11 dígitos';
+                    if (v == null || v.trim().isEmpty) {
+                      return 'Informe seu CPF';
+                    }
+                    if (!isValidCPF(v)) {
+                      return 'CPF inválido';
+                    }
                     return null;
                   },
                 ),
                 const SizedBox(height: 16),
 
-                // CAMPO TELEFONE (Max 11 e apenas números)
                 TextFormField(
                   controller: _telefoneController,
                   decoration: const InputDecoration(
                     labelText: 'Telefone (Celular com DDD)',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.phone),
-                    counterText: '', // Remove o contador visual (0/11)
+                    counterText: '',
                   ),
                   keyboardType: TextInputType.phone,
-                  maxLength: 11, // Trava a digitação em 11 caracteres (DDD + 9)
+                  maxLength: 11,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   validator: (v) {
-                    if (v == null || v.isEmpty) return 'Informe seu telefone';
-                    if (v.length != 11) return 'Telefone deve ter 11 dígitos (DDD+9)';
+                    if (v == null || v.trim().isEmpty) {
+                      return 'Informe seu telefone';
+                    }
+                    if (v.trim().length != 11) {
+                      return 'Telefone deve ter 11 dígitos (DDD + 9)';
+                    }
                     return null;
                   },
                 ),
                 const SizedBox(height: 32),
-                
+
                 ElevatedButton(
                   onPressed: _salvando ? null : _salvar,
                   style: ElevatedButton.styleFrom(
