@@ -10,7 +10,7 @@ import '../services/api_service.dart';
 
 class GravarVideoScreen extends StatefulWidget {
   final Pet pet;
-  const GravarVideoScreen({Key? key, required this.pet}) : super(key: key);
+  const GravarVideoScreen({super.key, required this.pet});
 
   @override
   _GravarVideoScreenState createState() => _GravarVideoScreenState();

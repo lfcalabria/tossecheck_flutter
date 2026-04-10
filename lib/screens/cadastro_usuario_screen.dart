@@ -6,7 +6,7 @@ import '../services/api_service.dart';
 import 'lista_pets_screen.dart';
  
 class CadastroUsuarioScreen extends StatefulWidget {
-  const CadastroUsuarioScreen({Key? key}) : super(key: key);
+  const CadastroUsuarioScreen({super.key});
 
   @override
   _CadastroUsuarioScreenState createState() => _CadastroUsuarioScreenState();

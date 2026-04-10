@@ -13,7 +13,7 @@ import 'detalhes_observacao_screen.dart';
 
 class EditarPetScreen extends StatefulWidget {
   final Pet pet;
-  const EditarPetScreen({Key? key, required this.pet}) : super(key: key);
+  const EditarPetScreen({super.key, required this.pet});
 
   @override
   _EditarPetScreenState createState() => _EditarPetScreenState();

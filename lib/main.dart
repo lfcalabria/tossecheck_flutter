@@ -21,7 +21,7 @@ void main() async {
 }
 
 class TosseCheckApp extends StatelessWidget {
-  const TosseCheckApp({Key? key}) : super(key: key);
+  const TosseCheckApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +35,7 @@ class TosseCheckApp extends StatelessWidget {
 }
 
 class SplashChecker extends StatefulWidget {
-  const SplashChecker({Key? key}) : super(key: key);
+  const SplashChecker({super.key});
 
   @override
   _SplashCheckerState createState() => _SplashCheckerState();

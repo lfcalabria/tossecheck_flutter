@@ -3,7 +3,7 @@ import '../models/observacao.dart';
 
 class DetalhesObservacaoScreen extends StatelessWidget {
   final Observacao observacao;
-  const DetalhesObservacaoScreen({Key? key, required this.observacao}) : super(key: key);
+  const DetalhesObservacaoScreen({super.key, required this.observacao});
 
   @override
   Widget build(BuildContext context) {

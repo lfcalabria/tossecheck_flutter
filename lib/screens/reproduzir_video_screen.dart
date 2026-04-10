@@ -5,7 +5,7 @@ import '../models/videopet.dart';
 
 class ReproduzirVideoScreen extends StatefulWidget {
   final VideoPet video;
-  const ReproduzirVideoScreen({Key? key, required this.video}) : super(key: key);
+  const ReproduzirVideoScreen({super.key, required this.video});
 
   @override
   _ReproduzirVideoScreenState createState() => _ReproduzirVideoScreenState();

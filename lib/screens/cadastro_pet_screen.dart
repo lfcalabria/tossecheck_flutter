@@ -8,7 +8,7 @@ import '../models/pet.dart';
 import '../services/api_service.dart';
 
 class CadastroPetScreen extends StatefulWidget {
-  const CadastroPetScreen({Key? key}) : super(key: key);
+  const CadastroPetScreen({super.key});
 
   @override
   _CadastroPetScreenState createState() => _CadastroPetScreenState();
@@ -120,7 +120,7 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: 'Tipo', border: OutlineInputBorder()),
-                value: _tipoSelecionado,
+                initialValue: _tipoSelecionado,
                 items: const [
                   DropdownMenuItem(value: 'cachorro', child: Text('Cachorro')),
                   DropdownMenuItem(value: 'gato', child: Text('Gato')),
@@ -130,7 +130,7 @@ class _CadastroPetScreenState extends State<CadastroPetScreen> {
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: 'Sexo', border: OutlineInputBorder()),
-                value: _sexoSelecionado,
+                initialValue: _sexoSelecionado,
                 items: const [
                   DropdownMenuItem(value: 'masculino', child: Text('Masculino')),
                   DropdownMenuItem(value: 'feminino', child: Text('Feminino')),
