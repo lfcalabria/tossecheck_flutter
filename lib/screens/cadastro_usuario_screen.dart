@@ -30,21 +30,17 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
     super.dispose();
   }
 
-  // Formata nomes brasileiros de forma inteligente
   String _formatarNome(String nome) {
     if (nome.trim().isEmpty) return '';
-
     return nome
         .trim()
         .split(RegExp(r'\s+'))
         .map((palavra) {
           if (palavra.isEmpty) return '';
-
-          if (['de', 'da', 'das', 'do', 'dos', 'e']
-              .contains(palavra.toLowerCase())) {
-            return palavra.toLowerCase();
+          final lower = palavra.toLowerCase();
+          if (['de', 'da', 'das', 'do', 'dos', 'e'].contains(lower)) {
+            return lower;
           }
-
           return palavra[0].toUpperCase() + palavra.substring(1).toLowerCase();
         })
         .join(' ');
@@ -57,17 +53,33 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
 
     try {
       final db = DatabaseHelper.instance;
+      final apiService = ApiService();
 
       final nomeFormatado = _formatarNome(_nomeController.text);
-      final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'[^\d]'), '');
+      final cpfDigitado = _cpfController.text.trim();
+
+      // ✅ 1) Validação local de CPF
+      if (!isValidCPF(cpfDigitado)) {
+        if (!mounted) return;
+        setState(() => _salvando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('CPF inválido'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // ✅ 2) Normalização
+      final cpfLimpo = cpfDigitado.replaceAll(RegExp(r'[^\d]'), '');
       final telefoneLimpo =
           _telefoneController.text.replaceAll(RegExp(r'[^\d]'), '');
 
-      // ✅ evita duplicar: se já existir usuário com esse CPF, atualiza
+      // ✅ 3) Upsert local por CPF
       final usuarioExistente = await db.getUsuarioPorCpf(cpfLimpo);
 
       Usuario usuario;
-
       if (usuarioExistente != null) {
         usuario = Usuario(
           id: usuarioExistente.id,
@@ -81,7 +93,6 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
           bloqueado: usuarioExistente.bloqueado,
           liberado: usuarioExistente.liberado,
         );
-
         await db.updateUsuario(usuario);
       } else {
         usuario = Usuario(
@@ -92,33 +103,42 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
           dataUltimaAtualizacao: DateTime.now(),
           sincronizado: false,
           bloqueado: false,
-          liberado: true,
+          liberado: false, // pendente até validação no servidor
         );
-
-        // ✅ pega o id gerado no SQLite e grava no objeto
         final idInserido = await db.insertUsuario(usuario);
         usuario.id = idInserido;
       }
 
-      // tenta sincronizar se houver internet
-      final apiService = ApiService();
-      final hasInternet = await apiService.hasInternet();
-
-      if (hasInternet) {
+      // ✅ 4) Se online, tenta validar/sincronizar
+      final online = await apiService.hasInternet();
+      if (online) {
         final resultado = await apiService.sincronizarUsuarioLocal(usuario);
 
+        // ✅ CONFLITO DEFINITIVO → FECHA APP
         if (resultado.conflito) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  resultado.mensagem ??
-                      'Conflito de CPF. O usuário foi bloqueado.',
-                ),
-                backgroundColor: Colors.red,
+          if (!mounted) return;
+          setState(() => _salvando = false); // para spinner
+
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => AlertDialog(
+              title: const Text('Acesso bloqueado'),
+              content: Text(
+                resultado.mensagem ??
+                    'CPF já cadastrado com dados divergentes.\nO aplicativo será encerrado.',
               ),
-            );
-          }
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    // ✅ fecha o app de verdade
+                    SystemNavigator.pop();
+                  },
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
           return;
         }
 
@@ -130,8 +150,20 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
           );
           return;
         }
+
+        // ❌ Erro não-conflito
+        if (!mounted) return;
+        setState(() => _salvando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(resultado.mensagem ?? 'Erro ao sincronizar'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
       }
 
+      // ✅ 5) Offline: deixa entrar
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -139,6 +171,7 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      setState(() => _salvando = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Erro ao salvar cadastro: $e'),
@@ -146,9 +179,7 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
         ),
       );
     } finally {
-      if (mounted) {
-        setState(() => _salvando = false);
-      }
+      if (mounted) setState(() => _salvando = false);
     }
   }
 
@@ -169,8 +200,6 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
                 const Text(
                   'Bem-vindo ao TosseCheck!\n\n'
                   'Para utilizar o aplicativo, precisamos do seu cadastro.\n'
-                  'Seus dados serão utilizados para personalizar sua experiência '
-                  'e sincronizar com nossos servidores.\n\n'
                   'Obrigado por escolher o TosseCheck.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16),
@@ -202,12 +231,8 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
                   maxLength: 11,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   validator: (v) {
-                    if (v == null || v.trim().isEmpty) {
-                      return 'Informe seu CPF';
-                    }
-                    if (!isValidCPF(v)) {
-                      return 'CPF inválido';
-                    }
+                    if (v == null || v.trim().isEmpty) return 'Informe seu CPF';
+                    if (!isValidCPF(v)) return 'CPF inválido';
                     return null;
                   },
                 ),

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../database/database_helper.dart';
 import '../models/pet.dart';
+import '../models/videopet.dart';
 // import '../services/api_service.dart'; // ✅ opcional, se quiser sync imediato
 
 class GravarTosseAutoScreen extends StatefulWidget {

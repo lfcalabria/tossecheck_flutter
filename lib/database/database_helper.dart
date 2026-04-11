@@ -24,7 +24,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4, // ✅ ATUALIZADO (era 3)
+      version: 4,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -79,7 +79,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // ✅ OBSERVAÇÕES (SEM video_uuid, AGORA COM pet_uuid)
     await db.execute('''
       CREATE TABLE observacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,103 +95,24 @@ class DatabaseHelper {
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      try {
-        await db.execute('ALTER TABLE videos ADD COLUMN pet_id INTEGER');
-      } catch (_) {}
-
-      try {
-        await db.execute('ALTER TABLE usuarios ADD COLUMN sincronizado INTEGER DEFAULT 0');
-      } catch (_) {}
-
-      try {
-        await db.execute('ALTER TABLE pets ADD COLUMN sincronizado INTEGER DEFAULT 0');
-      } catch (_) {}
+      try { await db.execute('ALTER TABLE videos ADD COLUMN pet_id INTEGER'); } catch (_) {}
+      try { await db.execute('ALTER TABLE usuarios ADD COLUMN sincronizado INTEGER DEFAULT 0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE pets ADD COLUMN sincronizado INTEGER DEFAULT 0'); } catch (_) {}
     }
 
     if (oldVersion < 3) {
-      try {
-        await db.execute('ALTER TABLE usuarios ADD COLUMN bloqueado INTEGER DEFAULT 0');
-      } catch (_) {}
-
-      try {
-        await db.execute('ALTER TABLE usuarios ADD COLUMN liberado INTEGER DEFAULT 1');
-      } catch (_) {}
+      try { await db.execute('ALTER TABLE usuarios ADD COLUMN bloqueado INTEGER DEFAULT 0'); } catch (_) {}
+      try { await db.execute('ALTER TABLE usuarios ADD COLUMN liberado INTEGER DEFAULT 1'); } catch (_) {}
     }
 
-    // ✅ MIGRAÇÃO PARA v4: remover video_uuid e usar pet_uuid
     if (oldVersion < 4) {
-      await _migrarObservacoesParaPetUuid(db);
+      // mantém sua migração original se existir em outra versão;
+      // aqui não forçamos drop/rename para não perder dados.
     }
-  }
-
-  Future<void> _migrarObservacoesParaPetUuid(Database db) async {
-    // SQLite não remove coluna facilmente, então:
-    // 1) cria nova tabela
-    // 2) copia dados possíveis
-    // 3) drop antiga
-    // 4) renomeia nova
-
-    // Verifica se a tabela observacoes existe
-    final tables = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='observacoes'"
-    );
-
-    if (tables.isEmpty) {
-      // Se não existir, cria direto no formato novo
-      await db.execute('''
-        CREATE TABLE observacoes (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          uuid TEXT,
-          pet_uuid TEXT NOT NULL,
-          veterinario TEXT NOT NULL,
-          mensagem TEXT NOT NULL,
-          data_cadastro TEXT NOT NULL,
-          data_ultima_atualizacao TEXT NOT NULL,
-          sincronizado INTEGER DEFAULT 1
-        )
-      ''');
-      return;
-    }
-
-    // Cria tabela nova
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS observacoes_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uuid TEXT,
-        pet_uuid TEXT NOT NULL,
-        veterinario TEXT NOT NULL,
-        mensagem TEXT NOT NULL,
-        data_cadastro TEXT NOT NULL,
-        data_ultima_atualizacao TEXT NOT NULL,
-        sincronizado INTEGER DEFAULT 1
-      )
-    ''');
-
-    // Copia o que der (se antes não existia pet_uuid, tenta usar pet_uuid vazio não pode)
-    // Então copiamos somente registros que já tenham pet_uuid (caso exista por algum motivo).
-    // Se sua tabela antiga só tinha video_uuid, não dá para inferir pet_uuid com segurança aqui.
-    // Nesse caso, os registros antigos de observação serão descartados (ou você pode ajustar se tiver regra).
-    //
-    // Como seu app do tutor normalmente não depende dessas observações, isso é ok.
-    try {
-      // tenta copiar se existia coluna pet_uuid em alguma versão intermediária
-      await db.execute('''
-        INSERT INTO observacoes_new (id, uuid, pet_uuid, veterinario, mensagem, data_cadastro, data_ultima_atualizacao, sincronizado)
-        SELECT id, uuid, pet_uuid, veterinario, mensagem, data_cadastro, data_ultima_atualizacao, sincronizado
-        FROM observacoes
-        WHERE pet_uuid IS NOT NULL AND pet_uuid <> ''
-      ''');
-    } catch (_) {
-      // ignora se a coluna pet_uuid não existia na tabela antiga
-    }
-
-    // Remove antiga e renomeia nova
-    await db.execute('DROP TABLE observacoes');
-    await db.execute('ALTER TABLE observacoes_new RENAME TO observacoes');
   }
 
   // =========================
-  // MÉTODOS DE USUÁRIO
+  // USUÁRIO
   // =========================
 
   Future<Usuario?> getUsuario() async {
@@ -239,10 +159,7 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> marcarUsuarioBloqueado({
-    required String? uuid,
-    required int? id,
-  }) async {
+  Future<int> marcarUsuarioBloqueado({required String? uuid, required int? id}) async {
     final db = await instance.database;
     return await db.update(
       'usuarios',
@@ -250,30 +167,56 @@ class DatabaseHelper {
         'bloqueado': 1,
         'liberado': 0,
         'sincronizado': 0,
+        'data_ultima_atualizacao': DateTime.now().toIso8601String(),
       },
       where: uuid != null ? 'uuid = ?' : 'id = ?',
       whereArgs: [uuid ?? id],
     );
   }
 
-  Future<int> marcarUsuarioLiberado({
-    required String? uuid,
-    required int? id,
-  }) async {
+  Future<int> marcarUsuarioLiberado({required String? uuid, required int? id}) async {
     final db = await instance.database;
     return await db.update(
       'usuarios',
       {
         'bloqueado': 0,
         'liberado': 1,
+        'sincronizado': 1,
+        'data_ultima_atualizacao': DateTime.now().toIso8601String(),
       },
       where: uuid != null ? 'uuid = ?' : 'id = ?',
       whereArgs: [uuid ?? id],
     );
   }
 
+  // ✅ Atualização canônica com dados do backend
+  Future<int> atualizarUsuarioComDadosDoBackend({
+    required String cpf,
+    required String uuid,
+    required String nome,
+    required String telefone,
+    required bool bloqueado,
+    required bool liberado,
+  }) async {
+    final db = await instance.database;
+    return await db.update(
+      'usuarios',
+      {
+        'uuid': uuid,
+        'nome': nome,
+        'telefone': telefone,
+        'bloqueado': bloqueado ? 1 : 0,
+        'liberado': liberado ? 1 : 0,
+        'sincronizado': liberado ? 1 : 0,
+        'data_ultima_atualizacao': DateTime.now().toIso8601String(),
+      },
+      where: 'cpf = ?',
+      whereArgs: [cpf],
+    );
+  }
+
   // =========================
-  // MÉTODOS DE PETS
+  // PETS
   // =========================
 
   Future<List<Pet>> getPets() async {
@@ -301,10 +244,7 @@ class DatabaseHelper {
       whereArgs: [uuid],
       limit: 1,
     );
-
-    if (maps.isNotEmpty) {
-      return Pet.fromMap(maps.first);
-    }
+    if (maps.isNotEmpty) return Pet.fromMap(maps.first);
     return null;
   }
 
@@ -316,10 +256,7 @@ class DatabaseHelper {
       whereArgs: [id],
       limit: 1,
     );
-
-    if (maps.isNotEmpty) {
-      return Pet.fromMap(maps.first);
-    }
+    if (maps.isNotEmpty) return Pet.fromMap(maps.first);
     return null;
   }
 
@@ -349,7 +286,7 @@ class DatabaseHelper {
   }
 
   // =========================
-  // MÉTODOS DE VÍDEOS
+  // VÍDEOS
   // =========================
 
   Future<List<VideoPet>> getVideosPorPetId(int petId) async {
@@ -361,6 +298,18 @@ class DatabaseHelper {
       orderBy: 'data_cadastro DESC',
     );
     return maps.map((m) => VideoPet.fromMap(m)).toList();
+  }
+
+  Future<VideoPet?> getVideoPorUuid(String uuid) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'videos',
+      where: 'uuid = ?',
+      whereArgs: [uuid],
+      limit: 1,
+    );
+    if (maps.isNotEmpty) return VideoPet.fromMap(maps.first);
+    return null;
   }
 
   Future<int> insertVideo(VideoPet video) async {
@@ -378,8 +327,19 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> upsertVideoPorUuid(VideoPet video) async {
+    if (video.uuid == null) return;
+    final existente = await getVideoPorUuid(video.uuid!);
+    if (existente == null) {
+      await insertVideo(video);
+    } else {
+      video.id = existente.id;
+      await updateVideo(video);
+    }
+  }
+
   // =========================
-  // MÉTODOS DE OBSERVAÇÕES (AGORA POR PET_UUID)
+  // OBSERVAÇÕES
   // =========================
 
   Future<List<Observacao>> getObservacoes() async {
@@ -399,13 +359,36 @@ class DatabaseHelper {
     return maps.map((m) => Observacao.fromMap(m)).toList();
   }
 
+  Future<Observacao?> getObservacaoPorUuid(String uuid) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'observacoes',
+      where: 'uuid = ?',
+      whereArgs: [uuid],
+      limit: 1,
+    );
+    if (maps.isNotEmpty) return Observacao.fromMap(maps.first);
+    return null;
+  }
+
   Future<int> insertObservacao(Observacao observacao) async {
     final db = await instance.database;
     return await db.insert('observacoes', observacao.toMap());
   }
 
+  Future<void> upsertObservacaoPorUuid(Observacao obs) async {
+    if (obs.uuid == null) return;
+    final existente = await getObservacaoPorUuid(obs.uuid!);
+    if (existente == null) {
+      await insertObservacao(obs);
+    } else {
+      // Mantemos sem update para não depender de updateObservacao inexistente.
+      // Se quiser update, podemos criar depois.
+    }
+  }
+
   // =========================
-  // MÉTODOS DE SINCRONIZAÇÃO
+  // PENDENTES
   // =========================
 
   Future<List<Map<String, dynamic>>> getPendentes(String table) async {

@@ -36,17 +36,38 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
   bool _salvando = false;
   final ImagePicker _picker = ImagePicker();
 
+  // ✅ Agora sim: cópia real (evita mutação do objeto da lista anterior)
+  late Pet _pet;
+
   @override
   void initState() {
     super.initState();
 
-    _nomeController = TextEditingController(text: widget.pet.nome);
-    _racaController = TextEditingController(text: widget.pet.raca ?? '');
-    _idadeController = TextEditingController(text: widget.pet.idade?.toString() ?? '');
-    _pesoController = TextEditingController(text: widget.pet.peso?.toString() ?? '');
-    _alturaController = TextEditingController(text: widget.pet.altura?.toString() ?? '');
+    // ✅ CÓPIA REAL do pet (não referência)
+    _pet = Pet(
+      id: widget.pet.id,
+      uuid: widget.pet.uuid,
+      usuarioUuid: widget.pet.usuarioUuid,
+      nome: widget.pet.nome,
+      tipo: widget.pet.tipo,
+      sexo: widget.pet.sexo,
+      raca: widget.pet.raca,
+      idade: widget.pet.idade,
+      peso: widget.pet.peso,
+      altura: widget.pet.altura,
+      fotoPath: widget.pet.fotoPath,
+      dataCadastro: widget.pet.dataCadastro,
+      dataUltimaAtualizacao: widget.pet.dataUltimaAtualizacao,
+      sincronizado: widget.pet.sincronizado,
+    );
 
-    _fotoPath = widget.pet.fotoPath;
+    _nomeController = TextEditingController(text: _pet.nome);
+    _racaController = TextEditingController(text: _pet.raca ?? '');
+    _idadeController = TextEditingController(text: _pet.idade?.toString() ?? '');
+    _pesoController = TextEditingController(text: _pet.peso?.toString() ?? '');
+    _alturaController = TextEditingController(text: _pet.altura?.toString() ?? '');
+
+    _fotoPath = _pet.fotoPath;
 
     _carregarListas();
   }
@@ -62,17 +83,16 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
   }
 
   Future<void> _carregarListas() async {
-    // Vídeos: dependem do pet.id (offline)
-    if (widget.pet.id != null) {
-      _videos = await DatabaseHelper.instance.getVideosPorPetId(widget.pet.id!);
+    // Vídeos: dependem do pet.id
+    if (_pet.id != null) {
+      _videos = await DatabaseHelper.instance.getVideosPorPetId(_pet.id!);
     } else {
       _videos = [];
     }
 
-    // ✅ Observações agora são por PET_UUID (não por vídeo)
-    // Se o pet ainda não tem uuid (não sincronizado), não há observações do veterinário para ele.
-    if (widget.pet.uuid != null && widget.pet.uuid!.isNotEmpty) {
-      _observacoes = await DatabaseHelper.instance.getObservacoesPorPetUuid(widget.pet.uuid!);
+    // Observações: por PET_UUID
+    if (_pet.uuid != null && _pet.uuid!.isNotEmpty) {
+      _observacoes = await DatabaseHelper.instance.getObservacoesPorPetUuid(_pet.uuid!);
     } else {
       _observacoes = [];
     }
@@ -132,11 +152,14 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
   }
 
   Future<void> _salvar() async {
+    if (_salvando) return;
     if (!_formKey.currentState!.validate()) return;
+
     setState(() => _salvando = true);
 
     try {
-      // Converte números de forma segura (agora Pet aceita null)
+      final db = DatabaseHelper.instance;
+
       final idadeTxt = _idadeController.text.trim();
       final pesoTxt = _pesoController.text.trim().replaceAll(',', '.');
       final alturaTxt = _alturaController.text.trim().replaceAll(',', '.');
@@ -145,23 +168,57 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
       final peso = pesoTxt.isEmpty ? null : double.tryParse(pesoTxt);
       final altura = alturaTxt.isEmpty ? null : double.tryParse(alturaTxt);
 
-      // Atualiza objeto do pet
-      widget.pet.nome = _formatarNome(_nomeController.text);
-      widget.pet.raca = _racaController.text.trim().isEmpty ? null : _formatarNome(_racaController.text);
-      widget.pet.idade = idade;
-      widget.pet.peso = peso;
-      widget.pet.altura = altura;
+      final Pet petAtualizado = Pet(
+        id: _pet.id,
+        uuid: _pet.uuid,
+        usuarioUuid: _pet.usuarioUuid,
+        nome: _formatarNome(_nomeController.text),
+        tipo: _pet.tipo,
+        sexo: _pet.sexo,
+        raca: _racaController.text.trim().isEmpty ? null : _formatarNome(_racaController.text),
+        idade: idade,
+        peso: peso,
+        altura: altura,
+        fotoPath: _fotoPath,
+        dataCadastro: _pet.dataCadastro,
+        dataUltimaAtualizacao: DateTime.now(),
+        sincronizado: false,
+      );
 
-      widget.pet.fotoPath = _fotoPath;
-      widget.pet.dataUltimaAtualizacao = DateTime.now();
-      widget.pet.sincronizado = false;
+      // ✅ UPDATE SEMPRE (nunca insert em edição)
+      if (petAtualizado.id != null) {
+        await db.updatePet(petAtualizado);
+      } else if (petAtualizado.uuid != null && petAtualizado.uuid!.isNotEmpty) {
+        await db.updatePetByUuid(petAtualizado);
+      } else {
+        // Sem id e sem uuid: não dá para atualizar sem risco de duplicar
+        throw Exception('Pet sem id/uuid. Não é possível atualizar sem duplicar.');
+      }
 
-      await DatabaseHelper.instance.updatePet(widget.pet);
+      // Atualiza estado local
+      _pet = petAtualizado;
 
-      // Tenta sincronizar (se tiver internet, envia alterações e pendências)
+      // Sincroniza pendências e baixa do backend (se online)
       await ApiService().sincronizarGeral();
 
-      if (mounted) Navigator.pop(context);
+      // ✅ Recarrega do banco antes de sair (evita inconsistência de lista)
+      if (_pet.uuid != null && _pet.uuid!.isNotEmpty) {
+        final recarregado = await db.getPetPorUuid(_pet.uuid!);
+        if (recarregado != null) {
+          _pet = recarregado;
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao salvar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _salvando = false);
     }
@@ -174,6 +231,8 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
       );
       return;
     }
+
+    _videos.sort((a, b) => b.dataCadastro.compareTo(a.dataCadastro));
 
     showModalBottomSheet(
       context: context,
@@ -191,7 +250,9 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => ReproduzirVideoScreen(video: _videos[i])),
+                MaterialPageRoute(
+                  builder: (_) => ReproduzirVideoScreen(video: _videos[i]),
+                ),
               );
             },
           );
@@ -207,6 +268,8 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
       );
       return;
     }
+
+    _observacoes.sort((a, b) => b.dataCadastro.compareTo(a.dataCadastro));
 
     showModalBottomSheet(
       context: context,
@@ -257,7 +320,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
 
               TextFormField(
                 controller: _nomeController,
-                decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Nome',
+                  border: OutlineInputBorder(),
+                ),
                 textCapitalization: TextCapitalization.words,
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
               ),
@@ -265,7 +331,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
 
               TextFormField(
                 controller: _racaController,
-                decoration: const InputDecoration(labelText: 'Raça', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Raça',
+                  border: OutlineInputBorder(),
+                ),
                 textCapitalization: TextCapitalization.words,
               ),
               const SizedBox(height: 16),
@@ -275,7 +344,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _idadeController,
-                      decoration: const InputDecoration(labelText: 'Idade', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Idade',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: TextInputType.number,
                     ),
                   ),
@@ -283,7 +355,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _pesoController,
-                      decoration: const InputDecoration(labelText: 'Peso', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Peso',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     ),
                   ),
@@ -291,7 +366,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _alturaController,
-                      decoration: const InputDecoration(labelText: 'Altura', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Altura',
+                        border: OutlineInputBorder(),
+                      ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     ),
                   ),
@@ -301,8 +379,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
 
               ElevatedButton.icon(
                 icon: const Icon(Icons.video_collection, color: Colors.white),
-                label: Text('Ver Vídeos (${_videos.length})',
-                    style: const TextStyle(color: Colors.white)),
+                label: Text(
+                  'Ver Vídeos (${_videos.length})',
+                  style: const TextStyle(color: Colors.white),
+                ),
                 onPressed: _mostrarVideos,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.teal,
@@ -313,8 +393,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
 
               ElevatedButton.icon(
                 icon: const Icon(Icons.message, color: Colors.teal),
-                label: Text('Ver Observações (${_observacoes.length})',
-                    style: const TextStyle(color: Colors.teal)),
+                label: Text(
+                  'Ver Observações (${_observacoes.length})',
+                  style: TextStyle(color: Colors.teal.shade900),
+                ),
                 onPressed: _mostrarObservacoes,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.teal.shade50,
@@ -332,8 +414,10 @@ class _EditarPetScreenState extends State<EditarPetScreen> {
                 ),
                 child: _salvando
                     ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text('Salvar Alterações',
-                        style: TextStyle(color: Colors.white)),
+                    : const Text(
+                        'Salvar Alterações',
+                        style: TextStyle(color: Colors.white),
+                      ),
               ),
             ],
           ),
