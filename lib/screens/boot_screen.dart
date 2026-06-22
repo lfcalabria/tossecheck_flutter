@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../database/database_helper.dart';
 import '../services/api_service.dart';
@@ -66,14 +65,22 @@ class _BootScreenState extends State<BootScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('Acesso bloqueado'),
+        title: const Text('CPF já cadastrado'),
         content: const Text(
-          'Este CPF está bloqueado no sistema.\n\nO aplicativo será encerrado.',
+          'Este CPF já está cadastrado com outros dados.\n\n'
+          'Refaça o cadastro com o CPF correto para continuar.',
         ),
         actions: [
           TextButton(
-            onPressed: () => SystemNavigator.pop(),
-            child: const Text('OK'),
+            onPressed: () async {
+              // Remove o registro travado e volta para o cadastro,
+              // permitindo informar o CPF correto.
+              await DatabaseHelper.instance.deleteUsuario();
+              if (!mounted) return;
+              Navigator.of(context).pop(); // fecha o diálogo
+              _go(const CadastroUsuarioScreen());
+            },
+            child: const Text('Refazer cadastro'),
           ),
         ],
       ),

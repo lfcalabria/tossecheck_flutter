@@ -114,26 +114,27 @@ class _CadastroUsuarioScreenState extends State<CadastroUsuarioScreen> {
       if (online) {
         final resultado = await apiService.sincronizarUsuarioLocal(usuario);
 
-        // ✅ CONFLITO DEFINITIVO → FECHA APP
+        // ⚠️ CONFLITO DE CPF → desfaz o cadastro local e deixa tentar de novo.
+        // (Antes o app marcava o usuário como bloqueado e se fechava, o que
+        // travava o acesso para sempre num CPF digitado errado.)
         if (resultado.conflito) {
+          await db.deleteUsuario();
+
           if (!mounted) return;
           setState(() => _salvando = false); // para spinner
 
           showDialog(
             context: context,
-            barrierDismissible: false,
             builder: (_) => AlertDialog(
-              title: const Text('Acesso bloqueado'),
+              title: const Text('CPF já cadastrado'),
               content: Text(
                 resultado.mensagem ??
-                    'CPF já cadastrado com dados divergentes.\nO aplicativo será encerrado.',
+                    'Este CPF já está cadastrado com outros dados. '
+                    'Confira o número e tente novamente.',
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    // ✅ fecha o app de verdade
-                    SystemNavigator.pop();
-                  },
+                  onPressed: () => Navigator.pop(context),
                   child: const Text('OK'),
                 ),
               ],

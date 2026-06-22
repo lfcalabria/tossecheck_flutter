@@ -28,6 +28,24 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Ícone do app (gerado por: dart run flutter_launcher_icons)
+# Salve a logo em assets/icon/tossecheck.png (PNG quadrado, ideal 1024x1024).
+flutter_launcher_icons:
+  image_path: "assets/icon/tossecheck.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  # Ícone adaptativo do Android (fundo claro da logo + a própria arte na frente)
+  adaptive_icon_background: "#F4F5F5"
+  adaptive_icon_foreground: "assets/icon/tossecheck.png"
+  web:
+    generate: true
+  windows:
+    generate: true
+  macos:
+    generate: true
 
 flutter:
   uses-material-design: true

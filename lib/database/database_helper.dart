@@ -215,6 +215,14 @@ class DatabaseHelper {
     );
   }
 
+  /// Remove o usuário local (modelo de 1 usuário por dispositivo).
+  /// Usado para desfazer um cadastro que conflitou e evitar que o app
+  /// fique preso num estado bloqueado permanente.
+  Future<int> deleteUsuario() async {
+    final db = await instance.database;
+    return await db.delete('usuarios');
+  }
+
   // =========================
   // PETS
   // =========================
