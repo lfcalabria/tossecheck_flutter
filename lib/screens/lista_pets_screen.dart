@@ -2,12 +2,16 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
+import '../models/observacao.dart';
 import '../models/pet.dart';
 import '../models/usuario.dart';
+import '../models/videopet.dart';
 import '../services/api_service.dart';
 import 'cadastro_pet_screen.dart';
+import 'detalhes_observacao_screen.dart';
 import 'editar_pet_screen.dart';
 import 'gravar_tosse_auto_screen.dart';
+import 'reproduzir_video_screen.dart';
 import 'selecionar_pet_video_screen.dart';
 
 class ListaPetsScreen extends StatefulWidget {
@@ -103,6 +107,94 @@ class _ListaPetsScreenState extends State<ListaPetsScreen> {
     await _carregarDados();
   }
 
+  // Abre os vídeos já gravados deste pet
+  Future<void> _mostrarVideosDoPet(Pet pet) async {
+    final videos = pet.id == null
+        ? <VideoPet>[]
+        : await DatabaseHelper.instance.getVideosPorPetId(pet.id!);
+
+    if (!mounted) return;
+
+    if (videos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nenhum vídeo gravado ainda para ${pet.nome}.')),
+      );
+      return;
+    }
+
+    videos.sort((a, b) => b.dataCadastro.compareTo(a.dataCadastro));
+
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => ListView.builder(
+        itemCount: videos.length,
+        itemBuilder: (ctx, i) {
+          final data = videos[i].dataCadastro.toLocal().toString().split(' ')[0];
+          return ListTile(
+            leading: const Icon(Icons.video_library, color: Colors.teal),
+            title: Text('Vídeo de $data'),
+            trailing: videos[i].sincronizado
+                ? const Icon(Icons.cloud_done, color: Colors.green)
+                : const Icon(Icons.cloud_upload, color: Colors.orange),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ReproduzirVideoScreen(video: videos[i]),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  // Abre as observações recebidas para este pet
+  Future<void> _mostrarObservacoesDoPet(Pet pet) async {
+    final observacoes = (pet.uuid == null || pet.uuid!.isEmpty)
+        ? <Observacao>[]
+        : await DatabaseHelper.instance.getObservacoesPorPetUuid(pet.uuid!);
+
+    if (!mounted) return;
+
+    if (observacoes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Nenhuma observação recebida ainda para ${pet.nome}.'),
+        ),
+      );
+      return;
+    }
+
+    observacoes.sort((a, b) => b.dataCadastro.compareTo(a.dataCadastro));
+
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => ListView.builder(
+        itemCount: observacoes.length,
+        itemBuilder: (ctx, i) {
+          return ListTile(
+            leading: const Icon(Icons.medical_information, color: Colors.teal),
+            title: Text('Vet: Dr(a). ${observacoes[i].veterinario}'),
+            subtitle: const Text('Toque para ler'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      DetalhesObservacaoScreen(observacao: observacoes[i]),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
   ImageProvider? _petImage(String? fotoPath) {
     if (fotoPath == null || fotoPath.isEmpty) return null;
     final f = File(fotoPath);
@@ -173,16 +265,31 @@ class _ListaPetsScreenState extends State<ListaPetsScreen> {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          pet.sincronizado
-                              ? Icons.cloud_done
-                              : Icons.cloud_upload,
-                          color: pet.sincronizado
-                              ? Colors.green
-                              : Colors.orange,
-                        ),
-                        const SizedBox(width: 8),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Ver vídeos gravados',
+                          icon: Icon(
+                            pet.sincronizado
+                                ? Icons.cloud_done
+                                : Icons.cloud_upload,
+                            color: pet.sincronizado
+                                ? Colors.green
+                                : Colors.orange,
+                          ),
+                          onPressed: () => _mostrarVideosDoPet(pet),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Ver observações',
+                          icon: const Icon(
+                            Icons.medical_information,
+                            color: Colors.teal,
+                          ),
+                          onPressed: () => _mostrarObservacoesDoPet(pet),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Editar pet',
                           icon: const Icon(Icons.edit),
                           onPressed: () async {
                             await Navigator.push(
